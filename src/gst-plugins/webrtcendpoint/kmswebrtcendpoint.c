@@ -412,6 +412,9 @@ kms_webrtc_endpoint_gather_candidates (KmsWebrtcEndpoint * self,
   KmsWebrtcSession *webrtc_sess;
   gboolean ret = TRUE;
 
+  GST_INFO_OBJECT (self, "HOGE %s", "HOGE");
+  GST_ERROR_OBJECT (self, "HOGE %s", "HOGE");
+  
   GST_INFO_OBJECT (self, "Gather candidates for session '%s'", sess_id);
 
   sess = kms_base_sdp_endpoint_get_session (base_sdp_ep, sess_id);
@@ -435,7 +438,8 @@ kms_webrtc_endpoint_add_ice_candidate (KmsWebrtcEndpoint * self,
   KmsWebrtcSession *webrtc_sess;
   gboolean ret;
 
-  GST_INFO_OBJECT (self, "HOGE");
+  GST_INFO_OBJECT (self, "HOGE %s", "HOGE");
+  GST_ERROR_OBJECT (self, "HOGE %s", "HOGE");
 
   GST_INFO_OBJECT (self, "Add ICE candidate '%s' for session '%s'",
       kms_ice_candidate_get_candidate (candidate), sess_id);
@@ -491,6 +495,9 @@ kms_webrtc_endpoint_get_property (GObject * object, guint prop_id,
     GValue * value, GParamSpec * pspec)
 {
   KmsWebrtcEndpoint *self = KMS_WEBRTC_ENDPOINT (object);
+
+  GST_INFO_OBJECT (self, "HOGE %s", "HOGE");
+  GST_ERROR_OBJECT (self, "HOGE %s", "HOGE");
 
   KMS_ELEMENT_LOCK (self);
 
@@ -842,6 +849,7 @@ static void
 kms_webrtc_endpoint_init (KmsWebrtcEndpoint * self)
 {
   GST_ERROR_OBJECT (self, "kms_webrtc_endpoint_init | HOGE");
+  GST_INFO_OBJECT (self, "kms_webrtc_endpoint_init | HOGE");
 
   /* TODO: check which prop should be moved to session */
   g_object_set (G_OBJECT (self), "bundle", TRUE, "rtcp-mux", TRUE, "rtcp-nack",
