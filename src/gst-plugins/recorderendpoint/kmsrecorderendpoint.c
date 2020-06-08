@@ -496,13 +496,13 @@ kms_recorder_endpoint_send_eos_to_appsrcs (KmsRecorderEndpoint * self)
   SRCS_LOCK (self);
 
   size = g_hash_table_size (self->priv->srcs);
-  GST_ERROR_OBJECT(self, "send_eos size:%" G_GUINT64_FORMAT, size);
+  GST_ERROR_OBJECT(self, "send_eos size:%" G_GUINT32_FORMAT, size);
   if (size == 0) {
-    kms_base_media_muxer_set_state (self->priv->mux, GST_STATE_NULL);
+    gst_element_set_state(self->priv->pipeline, GST_STATE_NULL);
     goto end;
   }
 
-  kms_base_media_muxer_set_state (self->priv->mux, GST_STATE_PLAYING);
+  gst_element_set_state(self->priv->pipeline, GST_STATE_PLAYING);
   
   g_hash_table_foreach (self->priv->srcs, (GHFunc) send_eos_cb, NULL);
 
@@ -909,7 +909,6 @@ link_sinkpad_cb (GstPad * pad, GstObject * parent, GstPad * peer)
   GstPadLinkReturn ret = GST_PAD_LINK_REFUSED;
   KmsSinkPadData *sinkdata;
   GstElement *appsink, *appsrc;
-  KmsMediaType type;
   GstPad *target;
   gchar *id, *key;
 
@@ -940,11 +939,9 @@ link_sinkpad_cb (GstPad * pad, GstObject * parent, GstPad * peer)
 
   switch (sinkdata->type) {
     case KMS_ELEMENT_PAD_TYPE_AUDIO:
-      type = KMS_MEDIA_TYPE_AUDIO;
       appsrc = self->priv->audiosrc;
       break;
     case KMS_ELEMENT_PAD_TYPE_VIDEO:
-      type = KMS_MEDIA_TYPE_VIDEO;
       appsrc = self->priv->videosrc;
       break;
     default:
