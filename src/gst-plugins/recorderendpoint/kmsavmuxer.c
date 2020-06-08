@@ -201,6 +201,8 @@ kms_av_muxer_prepare_pipeline (KmsAVMuxer * self)
   self->priv->videosrc = gst_element_factory_make ("appsrc", "videoSrc");
   self->priv->audiosrc = gst_element_factory_make ("appsrc", "audioSrc");
 
+  GST_ERROR_OBJECT(self, "HOGE");
+  
   self->priv->sink =
       KMS_BASE_MEDIA_MUXER_GET_CLASS (self)->create_sink (KMS_BASE_MEDIA_MUXER
       (self), KMS_BASE_MEDIA_MUXER_GET_URI (self));

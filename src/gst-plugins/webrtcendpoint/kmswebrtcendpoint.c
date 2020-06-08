@@ -435,8 +435,6 @@ kms_webrtc_endpoint_add_ice_candidate (KmsWebrtcEndpoint * self,
   KmsWebrtcSession *webrtc_sess;
   gboolean ret;
 
-  GST_INFO_OBJECT (self, "HOGE");
-
   GST_INFO_OBJECT (self, "Add ICE candidate '%s' for session '%s'",
       kms_ice_candidate_get_candidate (candidate), sess_id);
 
@@ -841,8 +839,6 @@ kms_webrtc_endpoint_class_init (KmsWebrtcEndpointClass * klass)
 static void
 kms_webrtc_endpoint_init (KmsWebrtcEndpoint * self)
 {
-  GST_ERROR_OBJECT (self, "kms_webrtc_endpoint_init | HOGE");
-
   /* TODO: check which prop should be moved to session */
   g_object_set (G_OBJECT (self), "bundle", TRUE, "rtcp-mux", TRUE, "rtcp-nack",
       TRUE, "rtcp-remb", TRUE, NULL);
