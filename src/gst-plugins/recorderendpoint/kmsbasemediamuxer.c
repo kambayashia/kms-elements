@@ -178,6 +178,8 @@ kms_base_media_muxer_get_sink (KmsBaseMediaMuxer * self, const gchar * uri)
     g_clear_error (&err);
   }
 
+  GST_ERROR_OBJECT(self, "HOGE sink sakusei, uri:%s", uri);
+  
   /* Try to configure the sink element */
   sink_class = G_OBJECT_GET_CLASS (sink);
 

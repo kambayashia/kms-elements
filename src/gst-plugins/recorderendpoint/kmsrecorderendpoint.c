@@ -1139,24 +1139,20 @@ kms_recorder_endpoint_create_base_media_muxer (KmsRecorderEndpoint * self)
 {
   KmsBaseMediaMuxer *mux;
   const gchar *uri;
-  const gchar *location;
-  GstElement *muxer;
-  GstElement *identity;
+  gchar *location;
+  
   mux = KMS_BASE_MEDIA_MUXER (kms_av_muxer_new
                               (KMS_BASE_MEDIA_MUXER_PROFILE, self->priv->profile,
                                KMS_BASE_MEDIA_MUXER_URI, KMS_URI_ENDPOINT (self)->uri, NULL));
 
   self->priv->mux = mux;
   
-  //muxer = gst_element_factory_make("qtmux", NULL);
-  identity = gst_element_factory_mane("identity", NULL);
   self->priv->splitmuxsink = gst_element_factory_make("splitmuxsink", NULL);
   uri = KMS_URI_ENDPOINT (self)->uri;
   location = gst_uri_get_location (uri);
   location = g_strdup("/work/camera_%05d.mp4");
   
   g_object_set(self->priv->splitmuxsink,
-               //"muxer", muxer,
                "location", location,
                "max-size-bytes", 100000,
                NULL);
@@ -1174,7 +1170,6 @@ kms_recorder_endpoint_create_base_media_muxer (KmsRecorderEndpoint * self)
   gst_bin_add_many(GST_BIN(self->priv->pipeline),
                    self->priv->videosrc,
                    self->priv->audiosrc,
-                   //identity,
                    self->priv->splitmuxsink,
                    NULL);
 
