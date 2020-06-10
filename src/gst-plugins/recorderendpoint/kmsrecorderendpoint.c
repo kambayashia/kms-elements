@@ -23,8 +23,8 @@
 
 #include <string.h>
 #include <gst/gst.h>
+#include <gst/gstpipeline.h>
 #include <gst/pbutils/encoding-profile.h>
-
 #include <gst/app/gstappsrc.h>
 #include <gst/app/gstappsink.h>
 
@@ -39,8 +39,6 @@
 #include <commons/constants.h>
 #include <commons/kmsrefstruct.h>
 #include "kmsbasemediamuxer.h"
-#include "kmsavmuxer.h"
-#include "kmsksrmuxer.h"
 
 #define PLUGIN_NAME "recorderendpoint"
 
@@ -138,7 +136,6 @@ struct _KmsRecorderEndpointPrivate
   GstClockTime paused_start;
   gboolean use_dvr;
   GstTaskPool *pool;
-  KmsBaseMediaMuxer *mux;
   GMutex base_time_lock;
 
   GSList *sink_probes;
@@ -155,6 +152,11 @@ struct _KmsRecorderEndpointPrivate
   GHashTable *sink_pad_data;    /* <name, KmsSinkPadData> */
   KmsRecorderEndpointTransition transition;
   gboolean generate_pads;
+
+  GstElement *pipeline;
+  GstElement *splitmuxsink;
+  GstElement *videosrc;
+  GstElement *audiosrc;
 };
 
 typedef struct _MarkBufferProbeData
@@ -523,11 +525,11 @@ kms_recorder_endpoint_send_eos_to_appsrcs (KmsRecorderEndpoint * self)
   size = g_hash_table_size (self->priv->srcs);
 
   if (size == 0) {
-    kms_base_media_muxer_set_state (self->priv->mux, GST_STATE_NULL);
+    gst_element_set_state(self->priv->pipeline, GST_STATE_NULL);
     goto end;
   }
 
-  kms_base_media_muxer_set_state (self->priv->mux, GST_STATE_PLAYING);
+  gst_element_set_state(self->priv->pipeline, GST_STATE_PLAYING);
   g_hash_table_foreach (self->priv->srcs, (GHFunc) send_eos_cb, NULL);
 
 end:
@@ -546,7 +548,7 @@ kms_recorder_endpoint_dispose (GObject * object)
 
   KMS_ELEMENT_LOCK (KMS_ELEMENT (self));
 
-  if (self->priv->mux != NULL) {
+  if (self->priv->splitmuxsink != NULL) {
     GstBus *bus;
 
     if (self->priv->playing ||
@@ -557,13 +559,13 @@ kms_recorder_endpoint_dispose (GObject * object)
     }
 
     /* Remove bus handler and releases all queued messages */
-    bus = kms_base_media_muxer_get_bus (self->priv->mux);
+    bus = gst_pipeline_get_bus (GST_PIPELINE(self->priv->pipeline));
     gst_bus_set_flushing (bus, TRUE);
     gst_bus_set_sync_handler (bus, NULL, NULL, NULL);
     g_object_unref (bus);
 
     KMS_ELEMENT_UNLOCK (KMS_ELEMENT (self));
-    kms_base_media_muxer_set_state (self->priv->mux, GST_STATE_NULL);
+    gst_element_set_state(self->priv->pipeline, GST_STATE_NULL);
     KMS_ELEMENT_LOCK (KMS_ELEMENT (self));
 
     if (self->priv->sent_eos) {
@@ -585,7 +587,7 @@ kms_recorder_endpoint_release_pending_requests (KmsRecorderEndpoint * self)
 {
   gst_task_pool_cleanup (self->priv->pool);
 
-  g_clear_object (&self->priv->mux);
+  //g_clear_object (&self->priv->mux);
   gst_object_unref (self->priv->pool);
 }
 
@@ -792,7 +794,7 @@ kms_recorder_endpoint_stopped (KmsUriEndpoint * obj, GError ** error)
   if (self->priv->playing) {
     if (!self->priv->sent_eos) {
       KMS_ELEMENT_UNLOCK (self);
-      kms_base_media_muxer_set_state (self->priv->mux, GST_STATE_NULL);
+      gst_element_set_state(self->priv->pipeline, GST_STATE_NULL);
       KMS_ELEMENT_LOCK (self);
     } else {
       GST_DEBUG_OBJECT (self, "Pipeline will stop when all eos are processed");
@@ -853,15 +855,17 @@ kms_recorder_endpoint_started (KmsUriEndpoint * obj, GError ** error)
 
   KMS_ELEMENT_UNLOCK (self);
   /* Set internal pipeline to playing */
-  kms_base_media_muxer_set_state (self->priv->mux, GST_STATE_PLAYING);
+  gst_element_set_state(self->priv->pipeline, GST_STATE_PLAYING);
   KMS_ELEMENT_LOCK (self);
 
   BASE_TIME_LOCK (self);
 
   if (GST_CLOCK_TIME_IS_VALID (self->priv->paused_start)) {
+    /*
     self->priv->paused_time +=
         gst_clock_get_time (kms_base_media_muxer_get_clock (self->priv->mux)) -
         self->priv->paused_start;
+    */
     self->priv->paused_start = GST_CLOCK_TIME_NONE;
   }
 
@@ -883,7 +887,6 @@ kms_recorder_endpoint_paused (KmsUriEndpoint * obj, GError ** error)
 {
   KmsRecorderEndpoint *self = KMS_RECORDER_ENDPOINT (obj);
   KmsUriEndpointState state;
-  GstClock *clk;
 
   state = kms_uri_endpoint_get_state (KMS_URI_ENDPOINT (self));
 
@@ -907,12 +910,15 @@ kms_recorder_endpoint_paused (KmsUriEndpoint * obj, GError ** error)
 
   kms_recorder_endpoint_change_state (self, KMS_RECORDER_ENDPOINT_PAUSING);
 
+  /*
+  GstClock *clk;
   clk = kms_base_media_muxer_get_clock (self->priv->mux);
 
   if (clk) {
     self->priv->paused_start = gst_clock_get_time (clk);
   }
-
+  */
+  
   kms_recorder_endpoint_sync_state_changed (self, KMS_URI_ENDPOINT_STATE_PAUSE);
 
   return TRUE;
@@ -1039,7 +1045,6 @@ link_sinkpad_cb (GstPad * pad, GstObject * parent, GstPad * peer)
   GstPadLinkReturn ret = GST_PAD_LINK_REFUSED;
   KmsSinkPadData *sinkdata;
   GstElement *appsink, *appsrc;
-  KmsMediaType type;
   GstPad *target;
   gchar *id, *key;
 
@@ -1068,10 +1073,10 @@ link_sinkpad_cb (GstPad * pad, GstObject * parent, GstPad * peer)
 
   switch (sinkdata->type) {
     case KMS_ELEMENT_PAD_TYPE_AUDIO:
-      type = KMS_MEDIA_TYPE_AUDIO;
+      appsrc = self->priv->audiosrc;
       break;
     case KMS_ELEMENT_PAD_TYPE_VIDEO:
-      type = KMS_MEDIA_TYPE_VIDEO;
+      appsrc = self->priv->videosrc;
       break;
     default:
       GST_ERROR_OBJECT (self, "Invalid pad %" GST_PTR_FORMAT " connected %"
@@ -1082,8 +1087,6 @@ link_sinkpad_cb (GstPad * pad, GstObject * parent, GstPad * peer)
   GST_DEBUG_OBJECT (pad, "linked to %" GST_PTR_FORMAT, peer);
 
   id = gst_pad_get_name (pad);
-
-  appsrc = kms_base_media_muxer_add_src (self->priv->mux, type, id);
 
   if (appsrc == NULL) {
     GST_ERROR_OBJECT (self, "Can not get appsrc for pad %" GST_PTR_FORMAT, pad);
@@ -1118,11 +1121,13 @@ end:
 static void
 kms_recorder_release_pending_pad (gchar * id, KmsRecorderEndpoint * self)
 {
+  /*
   if (kms_base_media_muxer_remove_src (self->priv->mux, id)) {
     SRCS_LOCK (self);
     g_hash_table_remove (self->priv->srcs, id);
     SRCS_UNLOCK (self);
   }
+  */
 }
 
 static void
@@ -1284,7 +1289,7 @@ kms_recorder_endpoint_on_eos (KmsBaseMediaMuxer * obj, gpointer user_data)
   if (stop) {
     GST_DEBUG_OBJECT (recorder, "EOS received as a result of a stop operation."
         " Setting pipeline to NULL");
-    kms_base_media_muxer_set_state (recorder->priv->mux, GST_STATE_NULL);
+    gst_element_set_state(recorder->priv->pipeline, GST_STATE_PLAYING);
   }
 }
 
@@ -1314,19 +1319,52 @@ kms_recorder_endpoint_on_sink_added (KmsBaseMediaMuxer * obj,
 static void
 kms_recorder_endpoint_create_base_media_muxer (KmsRecorderEndpoint * self)
 {
-  KmsBaseMediaMuxer *mux;
+  const gchar *uri;
+  gchar *location;
 
-  if (self->priv->profile == KMS_RECORDING_PROFILE_KSR) {
-    mux = KMS_BASE_MEDIA_MUXER (kms_ksr_muxer_new
-        (KMS_BASE_MEDIA_MUXER_PROFILE, self->priv->profile,
-            KMS_BASE_MEDIA_MUXER_URI, KMS_URI_ENDPOINT (self)->uri, NULL));
-  } else {
-    mux = KMS_BASE_MEDIA_MUXER (kms_av_muxer_new
-        (KMS_BASE_MEDIA_MUXER_PROFILE, self->priv->profile,
-            KMS_BASE_MEDIA_MUXER_URI, KMS_URI_ENDPOINT (self)->uri, NULL));
+  GST_ERROR_OBJECT(self, "HOGE splitmuxsink");
+  
+  self->priv->splitmuxsink = gst_element_factory_make("splitmuxsink", NULL);
+  gst_element_set_state(self->priv->splitmuxsink, GST_STATE_PLAYING);
+  uri = KMS_URI_ENDPOINT (self)->uri;
+  location = gst_uri_get_location (uri);
+  location = g_strdup("/work/camera_%05d.mp4");
+
+  g_object_set(self->priv->splitmuxsink,
+               "location", location,
+               "max-size-time", (guint)10 * 1000000000,
+               NULL);
+
+  self->priv->pipeline = gst_pipeline_new (NULL);
+  
+  self->priv->videosrc = gst_element_factory_make ("appsrc", "videoSrc");
+  self->priv->audiosrc = gst_element_factory_make ("appsrc", "audioSrc");
+
+  g_object_set (self->priv->videosrc, "block", TRUE, "format", GST_FORMAT_TIME,
+      "max-bytes", 0, NULL);
+  g_object_set (self->priv->audiosrc, "block", TRUE, "format", GST_FORMAT_TIME,
+      "max-bytes", 0, NULL);
+
+  gst_bin_add_many(GST_BIN(self->priv->pipeline),
+                   self->priv->videosrc,
+                   self->priv->audiosrc,
+                   self->priv->splitmuxsink,
+                   NULL);
+
+  GST_ERROR_OBJECT(self, "HOGE uri:%s location:%s", uri, location);
+  /*
+  if (!gst_element_link_pads (self->priv->audiosrc, "src", self->priv->splitmuxsink, "audio_%u")) {
+      GST_ERROR_OBJECT (self,
+          "Could not link elements: %" GST_PTR_FORMAT ", %" GST_PTR_FORMAT,
+          self->priv->audiosrc, self->priv->splitmuxsink);
   }
-
-  self->priv->mux = mux;
+  */
+  if (!gst_element_link_pads (self->priv->videosrc, "src", self->priv->splitmuxsink, "video")) {
+      GST_ERROR_OBJECT (self,
+          "Could not link elements: %" GST_PTR_FORMAT ", %" GST_PTR_FORMAT,
+          self->priv->videosrc, self->priv->splitmuxsink);
+  }
+  g_free(location);
 }
 
 static void
@@ -1336,11 +1374,13 @@ kms_recorder_endpoint_new_media_muxer (KmsRecorderEndpoint * self)
 
   kms_recorder_endpoint_create_base_media_muxer (self);
 
+  /*
   g_signal_connect (self->priv->mux, "on-sink-added",
       G_CALLBACK (kms_recorder_endpoint_on_sink_added), self);
+  */
 
   kms_recorder_endpoint_update_media_stats (self);
-  bus = kms_base_media_muxer_get_bus (self->priv->mux);
+  bus = gst_pipeline_get_bus (self->priv->pipeline);
   gst_bus_set_sync_handler (bus, bus_sync_signal_handler, self, NULL);
   g_object_unref (bus);
 
@@ -1950,7 +1990,7 @@ kms_recorder_endpoint_on_eos_message (gpointer data)
 {
   KmsRecorderEndpoint *self = KMS_RECORDER_ENDPOINT (data);
 
-  kms_recorder_endpoint_on_eos (self->priv->mux, self);
+  kms_recorder_endpoint_on_eos (NULL, self);
 }
 
 static GstBusSyncReply
@@ -1960,10 +2000,6 @@ bus_sync_signal_handler (GstBus * bus, GstMessage * msg, gpointer data)
 
   if (GST_MESSAGE_TYPE (msg) == GST_MESSAGE_ERROR) {
     ErrorData *data;
-
-    GST_DEBUG_BIN_TO_DOT_FILE_WITH_TS (GST_BIN (self),
-        GST_DEBUG_GRAPH_SHOW_ALL, GST_ELEMENT_NAME (self));
-    kms_base_media_muxer_dot_file (self->priv->mux);
 
     GST_ERROR_OBJECT (self, "Message %" GST_PTR_FORMAT, msg);
 
@@ -1977,8 +2013,8 @@ bus_sync_signal_handler (GstBus * bus, GstMessage * msg, gpointer data)
     gst_task_pool_push (self->priv->pool, kms_recorder_endpoint_on_eos_message,
         self, NULL);
   } else if ((GST_MESSAGE_TYPE (msg) == GST_MESSAGE_STATE_CHANGED)
-      && (GST_OBJECT_CAST (KMS_BASE_MEDIA_MUXER_GET_PIPELINE (self->
-                  priv->mux)) == GST_MESSAGE_SRC (msg))) {
+             && (GST_OBJECT_CAST (GST_PIPELINE(self->
+                                               priv->pipeline)) == GST_MESSAGE_SRC (msg))) {
     GstState new_state, pending;
 
     gst_message_parse_state_changed (msg, NULL, &new_state, &pending);
