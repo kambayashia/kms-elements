@@ -135,7 +135,6 @@ struct _KmsRecorderEndpointPrivate
   KmsRecordingProfile profile;
   gboolean use_dvr;
   GstTaskPool *pool;
-  KmsBaseMediaMuxer *mux;
   GMutex base_time_lock;
 
   GSList *sink_probes;
@@ -641,6 +640,7 @@ kms_recorder_generate_pads (KmsRecorderEndpoint * self)
     return;
   }
 
+  GST_ERROR_OBJECT(self, "HOGE generate_pads");
   g_hash_table_foreach (self->priv->sink_pad_data, (GHFunc) connect_sink_func,
       self);
 
@@ -812,7 +812,7 @@ set_appsrc_caps (GstElement * appsrc, const GstCaps * caps)
   gst_structure_set_value (str, "framerate", &framerate);
   g_value_reset (&framerate);
 
-  GST_DEBUG_OBJECT (appsrc, "Setting source caps %" GST_PTR_FORMAT, srccaps);
+  GST_ERROR_OBJECT (appsrc, "Setting source caps %" GST_PTR_FORMAT, srccaps);
   g_object_set (appsrc, "caps", srccaps, NULL);
 
 end:
@@ -850,7 +850,7 @@ set_appsink_caps (GstElement * appsink, const GstCaps * caps,
       break;
   }
 
-  GST_DEBUG_OBJECT (appsink, "Setting sink caps %" GST_PTR_FORMAT, sinkcaps);
+  GST_ERROR_OBJECT (appsink, "Setting sink caps %" GST_PTR_FORMAT, sinkcaps);
   g_object_set (appsink, "caps", sinkcaps, NULL);
 
 end:
@@ -1019,13 +1019,14 @@ kms_recorder_endpoint_add_appsink (KmsRecorderEndpoint * self,
   GstElement *appsink;
   GstPad *sinkpad;
 
+  GST_ERROR_OBJECT(self, "HOGE add_appsink");
   if (g_hash_table_contains (self->priv->sink_pad_data, name)) {
-    GST_WARNING_OBJECT (self, "Sink %s already added", name);
+    GST_ERROR_OBJECT (self, "Sink %s already added", name);
     return;
   }
 
   if (type != KMS_ELEMENT_PAD_TYPE_AUDIO && type != KMS_ELEMENT_PAD_TYPE_VIDEO) {
-    GST_WARNING_OBJECT (self, "Unsupported pad type %u", type);
+    GST_ERROR_OBJECT (self, "Unsupported pad type %u", type);
     return;
   }
   
@@ -1137,24 +1138,18 @@ kms_recorder_endpoint_on_sink_added (KmsBaseMediaMuxer * obj,
 static void
 kms_recorder_endpoint_create_base_media_muxer (KmsRecorderEndpoint * self)
 {
-  KmsBaseMediaMuxer *mux;
   const gchar *uri;
   gchar *location;
-  
-  mux = KMS_BASE_MEDIA_MUXER (kms_av_muxer_new
-                              (KMS_BASE_MEDIA_MUXER_PROFILE, self->priv->profile,
-                               KMS_BASE_MEDIA_MUXER_URI, KMS_URI_ENDPOINT (self)->uri, NULL));
-
-  self->priv->mux = mux;
-  
+    
   self->priv->splitmuxsink = gst_element_factory_make("splitmuxsink", NULL);
+  gst_element_set_state(self->priv->splitmuxsink, GST_STATE_PLAYING);
   uri = KMS_URI_ENDPOINT (self)->uri;
   location = gst_uri_get_location (uri);
   location = g_strdup("/work/camera_%05d.mp4");
-  
+
   g_object_set(self->priv->splitmuxsink,
                "location", location,
-               "max-size-bytes", 100000,
+               "max-size-time", 10 * 1000000000,
                NULL);
 
   self->priv->pipeline = gst_pipeline_new (NULL);
@@ -1178,7 +1173,7 @@ kms_recorder_endpoint_create_base_media_muxer (KmsRecorderEndpoint * self)
       GST_ERROR_OBJECT (self,
           "Could not link elements: %" GST_PTR_FORMAT ", %" GST_PTR_FORMAT,
           self->priv->audiosrc, self->priv->splitmuxsink);
-    }
+  }
   if (!gst_element_link_pads (self->priv->videosrc, "src", self->priv->splitmuxsink, "video")) {
       GST_ERROR_OBJECT (self,
           "Could not link elements: %" GST_PTR_FORMAT ", %" GST_PTR_FORMAT,
@@ -1191,9 +1186,6 @@ static void
 kms_recorder_endpoint_new_media_muxer (KmsRecorderEndpoint * self)
 {
   kms_recorder_endpoint_create_base_media_muxer (self);
-
-  g_signal_connect (self->priv->mux, "on-sink-added",
-      G_CALLBACK (kms_recorder_endpoint_on_sink_added), self);
 
   kms_recorder_endpoint_update_media_stats (self);
 
@@ -1270,9 +1262,14 @@ kms_recorder_endpoint_get_caps_from_profile (KmsRecorderEndpoint * self,
   GstEncodingContainerProfile *cprof;
   const GList *profiles, *l;
   GstCaps *caps = NULL;
+  GstPad *sinkpad;
 
   switch (type) {
     case KMS_ELEMENT_PAD_TYPE_VIDEO:
+      /*
+      sinkpad = gst_element_get_static_pad (self->priv->splitmuxsink, "sink");
+      return gst_pad_query_caps(sinkpad, NULL);
+      */
       cprof =
           kms_recording_profile_create_profile (self->priv->profile, FALSE,
           TRUE);
@@ -1633,14 +1630,8 @@ kms_recorder_endpoint_request_new_sink_pad (KmsElement * obj,
   KmsSinkPadData *data;
   gboolean ret = FALSE;
 
+  GST_ERROR_OBJECT(self, "HOGEEEEEEEEEEEEEEEEEEEEEEEEEe");
   KMS_ELEMENT_LOCK (KMS_ELEMENT (self));
-
-  ret = self->priv->profile == KMS_RECORDING_PROFILE_KSR;
-
-  if (!ret) {
-    GST_WARNING_OBJECT (self, "KSR profile not configured");
-    goto end;
-  }
 
   kms_recorder_endpoint_add_appsink (self, type, description, name, TRUE);
   state = kms_uri_endpoint_get_state (KMS_URI_ENDPOINT (self));
@@ -1673,12 +1664,6 @@ kms_recorder_endpoint_release_requested_sink_pad (KmsElement * obj,
   gboolean ret = FALSE;
 
   KMS_ELEMENT_LOCK (KMS_ELEMENT (self));
-
-  ret = self->priv->profile == KMS_RECORDING_PROFILE_KSR;
-
-  if (!ret) {
-    goto end;
-  }
 
   padname = gst_pad_get_name (pad);
   data = g_hash_table_lookup (self->priv->sink_pad_data, padname);
