@@ -185,3 +185,5 @@ install(
   LIBRARY DESTINATION ${CMAKE_INSTALL_GST_PLUGINS_DIR}
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
 )
+
+include_directories(/usr/local/include/gstreamer-1.5)
